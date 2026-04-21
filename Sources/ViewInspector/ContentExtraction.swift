@@ -157,6 +157,10 @@ internal extension View {
         if ViewInspectorConfig.resolveEnvironmentValues {
             let env = EnvironmentInjection.environmentValues(from: environmentModifiers)
             copy = EnvironmentInjection.resolveEnvironmentProperties(in: copy, using: env)
+            // b9-fork: also resolve any @Environment leaked through closure-captured `self`
+            // into the body tree (method-reference captures don't propagate the byte-rewrite
+            // done on `copy`, so re-apply to the returned body before handing off).
+            return EnvironmentInjection.resolveEnvironmentProperties(in: copy.body, using: env)
         }
         return copy.body
     }
@@ -194,6 +198,7 @@ internal extension ViewModifier {
         if ViewInspectorConfig.resolveEnvironmentValues {
             let env = EnvironmentInjection.environmentValues(from: environmentModifiers)
             copy = EnvironmentInjection.resolveEnvironmentProperties(in: copy, using: env)
+            return EnvironmentInjection.resolveEnvironmentProperties(in: copy.body(), using: env)
         }
         return copy.body()
     }
