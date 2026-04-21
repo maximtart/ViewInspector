@@ -11,11 +11,13 @@ public enum ViewInspectorConfig {
     ///
     /// Defaults to the `VIEWINSPECTOR_RESOLVE_ENVIRONMENT` environment variable
     /// (set to "1", "YES", or "TRUE"). Can be overridden per-test via direct assignment.
+    // b9-fork default: true (was false upstream) — silences @Environment warnings globally
+    // across all consumer test suites without requiring per-suite opt-in.
     nonisolated(unsafe) public static var resolveEnvironmentValues: Bool = {
         if let value = ProcessInfo.processInfo.environment["VIEWINSPECTOR_RESOLVE_ENVIRONMENT"] {
             return value == "1" || value.uppercased() == "YES" || value.uppercased() == "TRUE"
         }
-        return false
+        return true
     }()
 
 }
