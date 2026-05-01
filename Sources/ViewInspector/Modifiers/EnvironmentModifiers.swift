@@ -91,22 +91,37 @@ extension _EnvironmentKeyWritingModifier: EnvironmentModifier {
 
 @available(iOS 13.0, macOS 10.15, tvOS 13.0, *)
 extension _EnvironmentKeyTransformModifier: EnvironmentModifier {
-    
+
     static func qualifiesAsEnvironmentModifier() -> Bool {
-        #if !os(macOS) && !targetEnvironment(macCatalyst)
-        if #available(iOS 15.0, tvOS 15.0, watchOS 8.0, *),
-           Value.self == TextInputAutocapitalization.self {
-            return true
-        }
-        #endif
-        return false
+        // b9-fork: qualify ALL Value types (was: only TextInputAutocapitalization).
+        // Apple's `.disabled(_:)` is implemented as `_EnvironmentKeyTransformModifier<Bool>`
+        // writing `\.isEnabled` — making it qualify lets `find()` traversal carry the
+        // modifier into `medium.environmentModifiers`, so nested children's
+        // `@Environment(\.isEnabled)` fields get byte-rewritten by
+        // `resolveEnvironmentProperties` and don't trigger the SwiftUI runtime warning
+        // "Accessing Environment<Bool>'s value outside of being installed on a View".
+        //
+        // Caveat: a custom `.transformEnvironment(\.x) { transform }` whose transform
+        // reads the OUTER chain's value (not just the default) won't be perfectly
+        // resolved here — `value()` applies the transform to `EnvironmentValues()`'s
+        // default for the keyPath, which matches Apple's `.disabled` semantics
+        // exactly (`$0 = $0 && !disabled`, default for `\.isEnabled` is `true`).
+        return true
     }
-    
+
     func keyPath() throws -> Any {
         return try Inspector.attribute(label: "keyPath", value: self)
     }
-    
+
     func value() throws -> Any {
-        return try Inspector.attribute(label: "transform", value: self)
+        let keyPath = try Inspector.attribute(
+            label: "keyPath", value: self,
+            type: WritableKeyPath<EnvironmentValues, Value>.self)
+        let transform = try Inspector.attribute(
+            label: "transform", value: self,
+            type: ((inout Value) -> Void).self)
+        var current = EnvironmentValues()[keyPath: keyPath]
+        transform(&current)
+        return current
     }
 }
