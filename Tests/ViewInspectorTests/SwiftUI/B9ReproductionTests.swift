@@ -89,6 +89,23 @@ final class B9ReproductionTests: XCTestCase {
         )
     }
 
+    // MARK: - Repro 1.5: EditButton's `editMode()` API
+
+    #if os(iOS)
+    /// Regression: `EditButton.editMode()` API used to call `wrappedValue` on
+    /// `@Environment<Binding<EditMode>?>` directly, which emitted "Accessing
+    /// Environment<Optional<Binding<EditMode>>>'s value outside of being
+    /// installed on a View" each call. The b9-fork reads the enum payload via
+    /// Mirror instead. This test asserts the API still returns the expected
+    /// default value (nil — no edit mode in tests).
+    @MainActor
+    func test_b9_editButtonEditMode_returnsNilDefault_withoutWarning() throws {
+        let view = EditButton()
+        let result = try view.inspect().editButton().editMode()
+        XCTAssertNil(result)
+    }
+    #endif
+
     // MARK: - Repro 2: `@FocusState` field
 
     /// REPRO: inspecting a view that holds `@FocusState` + `.focused($state)` —
