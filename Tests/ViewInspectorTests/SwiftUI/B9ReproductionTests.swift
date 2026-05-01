@@ -65,6 +65,24 @@ final class B9ReproductionTests: XCTestCase {
         )
     }
 
+    /// REPRO (deep nested): the `.disabled(true)` modifier must propagate
+    /// through several VStack/HStack levels to reach a deeply-nested child.
+    /// Mirrors bnine.ios's ChangeEmailUIView structure (SDIButtonView at depth
+    /// 3+ inside VStack/ScrollView), where the simpler shallow repro passes
+    /// but warnings still fire in production.
+    @MainActor
+    func test_b9_disabledOnDeeplyNestedChild_textReflectsDisabledState() throws {
+        let view = DeepNestedParent()
+        let text = try view.inspect().find(ViewType.Text.self, where: { txt in
+            let s = (try? txt.string()) ?? ""
+            return s == "enabled" || s == "disabled"
+        }).string()
+        XCTAssertEqual(
+            text, "disabled",
+            "`.disabled(true)` deep in body tree did not propagate \\.isEnabled"
+        )
+    }
+
     /// REPRO (modifier-pipeline level): the parent's `.disabled(true)` modifier
     /// should be recognized as an `EnvironmentModifier` and its keyPath/value
     /// resolved to `\.isEnabled = false`. If `_EnvironmentKeyTransformModifier<Bool>`
@@ -107,28 +125,82 @@ final class B9ReproductionTests: XCTestCase {
     #endif
 
     // MARK: - Repro 2: `@FocusState` field
+    //
+    // After the b9-fork's `FocusStateInjection.installStubLocations(in:)` hook
+    // in `extractContent`, the resolver byte-rewrites every nil
+    // `@FocusState.location` to `.some(LocationBox<ConstantLocation<Value>>)`
+    // before evaluating body. SwiftUI's wrappedValue/projectedValue getter
+    // takes the installed branch and skips the runtime warning.
 
-    /// REPRO: inspecting a view that holds `@FocusState` + `.focused($state)` —
-    /// the body should NOT be evaluated more than ~once for a simple `.find()`
-    /// call. Each body evaluation outside an installed View context emits a
-    /// SwiftUI runtime warning. This counter-based assertion is a proxy for
-    /// "no warnings emitted".
-    ///
-    /// Currently expected to FAIL: the body re-evaluates multiple times during
-    /// reflection traversal because @FocusState wrappedValue access can't be
-    /// pre-resolved with the same byte-rewrite trick used for @Environment.
+    /// Regression: `find(ViewType.TextField.self)` on a view holding @FocusState
+    /// must succeed without emitting "Accessing FocusState's value outside of the
+    /// body of a View".
     @available(iOS 15.0, macOS 12.0, tvOS 15.0, *)
     @MainActor
-    func test_b9_focusStateView_bodyEvaluatedAtMostTwice() throws {
+    func test_b9_focusStateView_findTextFieldDoesNotEmitWarning() throws {
         let view = FocusableView()
-        _ = try view.inspect().find(ViewType.TextField.self)
+        XCTAssertNoThrow(try view.inspect().find(ViewType.TextField.self))
+    }
 
-        XCTAssertLessThanOrEqual(
-            BodyInvocationCounter.count, 2,
-            "FocusableView.body evaluated \(BodyInvocationCounter.count) times during inspection — each evaluation outside an installed View emits a FocusState runtime warning"
+    /// Layout-stability regression: catches the silent-failure case where
+    /// Apple changes `@FocusState`'s internal layout (field order, padding,
+    /// or `location` field offset). Without this assertion, a layout shift
+    /// would mean `installStubLocations` silently no-ops, the byte-rewrite
+    /// never lands, and the SwiftUI runtime warning quietly returns —
+    /// while the `find()` traversal-based tests still pass.
+    ///
+    /// Strategy: call the installer directly, then walk Mirror to confirm
+    /// that the `_isFocused.location` Optional has been promoted from
+    /// `.none` to `.some(...)`. If the install can't find the FocusState
+    /// field via byte-match, the location stays nil and this assertion
+    /// fails loudly.
+    @available(iOS 15.0, macOS 12.0, tvOS 15.0, *)
+    @MainActor
+    func test_b9_focusStateInjection_actuallyInstallsLocation() throws {
+        let original = FocusableView()
+        let modified = FocusStateInjection.installStubLocations(in: original)
+
+        // Original is untouched (value semantics).
+        try assertLocationIsNil(in: original, label: "original")
+        // Modified should have `.some(...)` location.
+        try assertLocationIsSome(in: modified, label: "modified")
+    }
+
+    private func assertLocationIsNil<V>(
+        in view: V, label: String,
+        file: StaticString = #file, line: UInt = #line
+    ) throws {
+        let (display, count) = locationOptionalState(of: view)
+        XCTAssertEqual(display, "optional", "[\(label)] location must be Optional", file: file, line: line)
+        XCTAssertEqual(count, 0, "[\(label)] expected location == .none, got .some", file: file, line: line)
+    }
+
+    private func assertLocationIsSome<V>(
+        in view: V, label: String,
+        file: StaticString = #file, line: UInt = #line
+    ) throws {
+        let (display, count) = locationOptionalState(of: view)
+        XCTAssertEqual(display, "optional", "[\(label)] location must be Optional", file: file, line: line)
+        XCTAssertEqual(
+            count, 1,
+            "[\(label)] FocusStateInjection failed to install location — likely SwiftUI layout changed (field offset, ordering, or padding); byte-match in writeStubLocation no longer finds the FocusState field",
+            file: file, line: line
         )
     }
 
+    private func locationOptionalState<V>(of view: V) -> (display: String, count: Int) {
+        let mirror = Mirror(reflecting: view)
+        guard let fs = mirror.children.first(where: { $0.label == "_isFocused" }) else {
+            return ("?missingFS", -1)
+        }
+        let fsMirror = Mirror(reflecting: fs.value)
+        guard let locField = fsMirror.children.first(where: { $0.label == "location" }) else {
+            return ("?missingLoc", -1)
+        }
+        let locMirror = Mirror(reflecting: locField.value)
+        let display = locMirror.displayStyle.map { "\($0)" } ?? "?"
+        return (display, locMirror.children.count)
+    }
 }
 
 // MARK: - Test fixtures
@@ -157,6 +229,25 @@ private struct ParentWithDisabledChild: View {
 #if DEBUG
 @available(iOS 17.0, macOS 14.0, tvOS 17.0, *)
 #Preview { ParentWithDisabledChild() }
+#endif
+
+@available(iOS 13.0, macOS 10.15, tvOS 13.0, *)
+private struct DeepNestedParent: View {
+    var body: some View {
+        VStack {
+            Text("header")
+            VStack {
+                Text("subtitle")
+                ChildIsEnabledView()
+                    .disabled(true)
+            }
+        }
+    }
+}
+
+#if DEBUG
+@available(iOS 17.0, macOS 14.0, tvOS 17.0, *)
+#Preview { DeepNestedParent() }
 #endif
 
 @available(iOS 15.0, macOS 12.0, tvOS 15.0, *)

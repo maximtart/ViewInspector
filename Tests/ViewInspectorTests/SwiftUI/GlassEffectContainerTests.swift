@@ -8,6 +8,19 @@ import SwiftUI
 @available(iOS 26.0, macOS 26.0, tvOS 26.0, watchOS 26.0, *)
 final class GlassEffectContainerTests: XCTestCase {
 
+    // b9-fork: pre-install a non-zero id into the test's `@Namespace var ns`
+    // before its first read. Apple's `@Namespace.wrappedValue` getter emits
+    // "Reading a Namespace property outside View.body" when called with the
+    // default `id == 0` (the uninitialized state). Tests that read `ns` outside
+    // a View body would otherwise trigger this runtime warning. Setting the
+    // wrapper's `id` byte to a non-zero value silences the check.
+    override func setUp() {
+        super.setUp()
+        withUnsafeMutableBytes(of: &_ns) { bytes in
+            bytes.baseAddress!.assumingMemoryBound(to: Int.self).pointee = 1
+        }
+    }
+
     // MARK: - GlassEffectContainer Tests
 
     func testExtractionFromSingleViewContainer() throws {

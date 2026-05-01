@@ -74,6 +74,16 @@ internal extension Content {
                 medium = self.medium.appending(environmentObject: object)
             } else {
                 medium = self.medium.appending(environmentModifier: modifier)
+                // b9-fork: opt-in mirror into `transitiveViewModifiers`. Required
+                // for `_EnvironmentKeyTransformModifier<Bool>` (i.e. `.disabled(_:)`)
+                // so existing ViewInspector code paths reading
+                // `medium.transitiveViewModifiers` — `isDisabled()`, `tap()`'s
+                // disabled gate, transitive disabled-state inheritance — still
+                // find this modifier. `_EnvironmentKeyWritingModifier` and
+                // TextInputAutocapitalization opt out and stay env-list-only.
+                if modifier.requiresViewModifierMirror() {
+                    medium = medium.appending(transitiveViewModifier: self.view)
+                }
             }
         } else if let modifier = self.view as? PossiblyTransitiveModifier,
                   modifier.isTransitive() {

@@ -133,6 +133,11 @@ class EnvironmentInjectionTests: XCTestCase {
 
     @MainActor
     func testEnvironmentValuesFromModifiersAppliesCustomKeys() throws {
+        // Resolver must be enabled so `find(...)` doesn't trigger a SwiftUI runtime
+        // warning when `CustomKeyView.body` reads `@Environment(\.testString)` during
+        // traversal. The assertion below depends only on `medium.environmentModifiers`,
+        // not on `resolveEnvironmentValues` itself.
+        ViewInspectorConfig.resolveEnvironmentValues = true
         // Build EnvironmentValues from a tracked modifier and verify the value is applied
         let sut = CustomKeyView().environment(\.testString, "custom_value")
         let inspected = try sut.inspect().find(ViewType.View<CustomKeyView>.self)
@@ -257,3 +262,8 @@ private struct CustomKeyView: View {
     @Environment(\.testString) var testString
     var body: some View { Text(testString) }
 }
+
+#if DEBUG
+@available(iOS 17.0, macOS 14.0, tvOS 17.0, *)
+#Preview { CustomKeyView() }
+#endif

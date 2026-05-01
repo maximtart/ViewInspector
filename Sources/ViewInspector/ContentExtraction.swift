@@ -157,10 +157,22 @@ internal extension View {
         if ViewInspectorConfig.resolveEnvironmentValues {
             let env = EnvironmentInjection.environmentValues(from: environmentModifiers)
             copy = EnvironmentInjection.resolveEnvironmentProperties(in: copy, using: env)
+            // b9-fork: install stub AnyLocation into any nil @FocusState fields so
+            // SwiftUI's wrappedValue/projectedValue getters take the installed branch
+            // and skip the "Accessing FocusState's value outside of the body of a View"
+            // runtime warning during body evaluation.
+            if #available(iOS 15.0, macOS 12.0, tvOS 15.0, *) {
+                copy = FocusStateInjection.installStubLocations(in: copy)
+            }
             // b9-fork: also resolve any @Environment leaked through closure-captured `self`
             // into the body tree (method-reference captures don't propagate the byte-rewrite
             // done on `copy`, so re-apply to the returned body before handing off).
-            return EnvironmentInjection.resolveEnvironmentProperties(in: copy.body, using: env)
+            var bodyResult = copy.body
+            bodyResult = EnvironmentInjection.resolveEnvironmentProperties(in: bodyResult, using: env)
+            if #available(iOS 15.0, macOS 12.0, tvOS 15.0, *) {
+                bodyResult = FocusStateInjection.installStubLocations(in: bodyResult)
+            }
+            return bodyResult
         }
         return copy.body
     }
