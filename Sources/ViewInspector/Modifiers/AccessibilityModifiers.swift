@@ -119,7 +119,12 @@ public extension InspectableView {
     func accessibilityIdentifier() throws -> String {
         let call = "accessibilityIdentifier"
         if #available(iOS 26.0, macOS 26.0, tvOS 26.0, watchOS 26.0, *) {
-            return try v4AccessibilityProperty(path: "identifier|some|rawValue", call: call)
+            // iOS 26 shape: `properties.identifier` is a named optional property.
+            if let named: String = try? v4AccessibilityProperty(path: "identifier|some|rawValue", call: call) {
+                return named
+            }
+            // iOS 27 shape: `properties.storage` is an array of typed key/value entries.
+            return try v5AccessibilityIdentifier(call: call)
         } else if #available(iOS 16.0, macOS 13.0, tvOS 16.0, watchOS 9.0, *) {
             return try v3AccessibilityElement(
                 path: "some|rawValue", type: String.self,
@@ -414,6 +419,28 @@ extension InspectableView {
             path: "modifier|storage|value|properties|\(path)",
             type: T.self,
             call: call)
+    }
+
+    // iOS 27 moved AccessibilityProperties from named fields to a typed entry array:
+    // storage: [Entry(key: IdentifierKey.Type, value: AccessibilityIdentifierStorage?)]
+    func v5AccessibilityIdentifier(call: String) throws -> String {
+        let notFound = InspectionError
+            .modifierNotFound(parent: Inspector.typeName(value: content.view), modifier: call, index: 0)
+        guard let entries = try? v4AccessibilityProperty(path: "storage", type: Any.self, call: call)
+        else { throw notFound }
+        for entry in Mirror(reflecting: entries).children.map({ $0.value }) {
+            let fields = Mirror(reflecting: entry).children
+            guard let key = fields.first(where: { $0.label == "key" })?.value,
+                  String(describing: key).hasSuffix("IdentifierKey"),
+                  let boxed = fields.first(where: { $0.label == "value" })?.value,
+                  let unwrapped = Mirror(reflecting: boxed).children.first?.value
+            else { continue }
+            if let raw = Mirror(reflecting: unwrapped)
+                .children.first(where: { $0.label == "rawValue" })?.value as? String {
+                return raw
+            }
+        }
+        throw notFound
     }
 
     func v4AccessibilityPropertyFirst<T>(path: String, type: T.Type = T.self, call: String) throws -> T {
