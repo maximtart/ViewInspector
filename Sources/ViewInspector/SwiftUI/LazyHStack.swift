@@ -34,7 +34,13 @@ public extension InspectableView where View: MultipleViewContent {
 extension ViewType.LazyHStack: MultipleViewContent {
 
     public static func children(_ content: Content) throws -> LazyGroup<Content> {
-        let view = try Inspector.attribute(path: "tree|content", value: content.view)
+        // SDK 27 flattened lazy stacks: fields sit directly on the view, no `tree` wrapper.
+        let view: Any
+        if let treeContent = try? Inspector.attribute(path: "tree|content", value: content.view) {
+            view = treeContent
+        } else {
+            view = try Inspector.attribute(label: "content", value: content.view)
+        }
         return try Inspector.viewsInContainer(view: view, medium: content.medium)
     }
 }

@@ -54,18 +54,12 @@ extension GeometryReader: SingleViewProvider {
 
 @available(iOS 13.0, macOS 10.15, tvOS 13.0, *)
 private extension GeometryProxy {
-    struct Allocator48 {
-        let data: (Int64, Int64, Int64, Int64, Int64, Int64) = (0, 0, 0, 0, 0, 0)
-    }
-    struct Allocator52 {
-        let data: (Allocator48, Int32) = (.init(), 0)
-    }
-    
+    // Zero-filled stand-in; size varies by SDK (48/52 pre-27, 76 on SDK 27).
     init() {
-        if MemoryLayout<GeometryProxy>.size == 52 {
-            self = unsafeBitCast(Allocator52(), to: GeometryProxy.self)
-            return
+        let size = MemoryLayout<GeometryProxy>.size
+        let zeros = [UInt8](repeating: 0, count: size)
+        self = zeros.withUnsafeBytes {
+            $0.baseAddress!.loadUnaligned(as: GeometryProxy.self)
         }
-        self = unsafeBitCast(Allocator48(), to: GeometryProxy.self)
     }
 }
