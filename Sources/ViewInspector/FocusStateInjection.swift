@@ -99,7 +99,7 @@ internal enum FocusStateInjection {
         let mirror = Mirror(reflecting: entity)
         var copy = entity
 
-        for child in mirror.children {
+        for (childIndex, child) in mirror.children.enumerated() {
             let typeName = Inspector.typeName(value: child.value, namespaced: true)
             guard typeName.hasPrefix(prefix) else { continue }
 
@@ -134,6 +134,7 @@ internal enum FocusStateInjection {
                 valueSize: valueSize,
                 fieldSize: fsSize,
                 locationOffsetInField: locationOffsetInFS,
+                exactFieldOffset: _vi_recursiveChildOffset(T.self, index: childIndex),
                 into: copy
             )
         }
@@ -146,11 +147,34 @@ internal enum FocusStateInjection {
         valueSize: Int,
         fieldSize: Int,
         locationOffsetInField: Int,
+        exactFieldOffset: Int?,
         into entity: T
     ) -> T {
         let entitySize = MemoryLayout<T>.size
         let alignment = max(MemoryLayout<T>.alignment, 1)
         let pointerSize = MemoryLayout<UnsafeMutableRawPointer?>.size
+
+        // Prefer the exact runtime field offset — the scan below matches on the
+        // FocusState's value bytes (1 byte for Bool), which false-matches inside
+        // large sibling fields; same failure mode as the @Environment resolver.
+        if let exact = exactFieldOffset,
+           exact + fieldSize <= entitySize {
+            var verified = false
+            withUnsafeBytes(of: entity) { entityBytes in
+                let locStart = exact + locationOffsetInField
+                guard locStart + pointerSize <= entityBytes.count else { return }
+                verified = entityBytes[locStart..<locStart + pointerSize].allSatisfy { $0 == 0 }
+            }
+            if verified {
+                let retained = Unmanaged.passRetained(stub).toOpaque()
+                var result = entity
+                withUnsafeMutableBytes(of: &result) { bytes in
+                    let dst = bytes.baseAddress!.advanced(by: exact + locationOffsetInField)
+                    dst.assumingMemoryBound(to: UnsafeMutableRawPointer?.self).pointee = retained
+                }
+                return result
+            }
+        }
 
         var offset = 0
         while offset + fieldSize <= entitySize {

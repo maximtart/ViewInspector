@@ -3,7 +3,7 @@ import SwiftUI
 // Swift runtime: exact byte offset of stored field #index inside a struct/class.
 // Same entry point the stdlib's _forEachField uses internally.
 @_silgen_name("swift_reflectionMirror_recursiveChildOffset")
-private func _vi_recursiveChildOffset(_ type: Any.Type, index: Int) -> Int
+internal func _vi_recursiveChildOffset(_ type: Any.Type, index: Int) -> Int
 
 // MARK: - ViewInspectorConfig
 
