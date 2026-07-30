@@ -1,5 +1,10 @@
 import SwiftUI
 
+// Swift runtime: exact byte offset of stored field #index inside a struct/class.
+// Same entry point the stdlib's _forEachField uses internally.
+@_silgen_name("swift_reflectionMirror_recursiveChildOffset")
+private func _vi_recursiveChildOffset(_ type: Any.Type, index: Int) -> Int
+
 // MARK: - ViewInspectorConfig
 
 /// Global configuration for ViewInspector behavior.
@@ -141,6 +146,17 @@ internal extension EnvironmentInjection {
         return copy
     }
 
+    /// Exact byte offset of stored property `label` in `T` via runtime reflection.
+    /// Mirror children of a struct enumerate stored fields in declaration order,
+    /// so the child index maps 1:1 onto the runtime field index.
+    private static func exactFieldOffset<T>(label: String, in entity: T) -> Int? {
+        for (idx, child) in Mirror(reflecting: entity).children.enumerated()
+        where child.label == label {
+            return _vi_recursiveChildOffset(T.self, index: idx)
+        }
+        return nil
+    }
+
     /// Finds a field in the parent struct by byte-matching then overwrites with new bytes.
     ///
     /// Only `matchSize` bytes are compared for field identification (the keypath pointer).
@@ -160,6 +176,29 @@ internal extension EnvironmentInjection {
         label: String,
         into entity: T
     ) -> T {
+        // Write at the exact runtime field offset. The byte-scan fallback below can
+        // false-match the keypath pointer inside large payload fields (SDK 27:
+        // SDIButtonView's ~2KB inline dto payload matched at offsets 1152/1472 while
+        // the real _isEnabled field sits at 2208 — leaving the field unresolved in
+        // .keyPath state and silently corrupting the payload bytes).
+        if let exact = exactFieldOffset(label: label, in: entity) {
+            var verified = false
+            withUnsafeBytes(of: entity) { bytes in
+                guard exact + matchSize <= bytes.count else { return }
+                verified = Array(bytes[exact..<exact + matchSize])
+                    == Array(referenceBytes.prefix(matchSize))
+            }
+            if verified {
+                var result = entity
+                withUnsafeMutableBytes(of: &result) { bytes in
+                    for i in 0..<min(fieldSize, newBytes.count) {
+                        (bytes.baseAddress! + exact + i)
+                            .assumingMemoryBound(to: UInt8.self).pointee = newBytes[i]
+                    }
+                }
+                return result
+            }
+        }
         let entitySize = MemoryLayout<T>.size
         let entityAlignment = MemoryLayout<T>.alignment
         // Scan forward from offset 0 in alignment-sized steps.
